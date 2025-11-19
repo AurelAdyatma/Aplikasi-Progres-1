@@ -1,0 +1,381 @@
+import streamlit as st
+import pandas as pd
+import time
+import hashlib
+import random
+import sqlite3
+from datetime import datetime, timedelta
+
+st.set_page_config(
+    page_title="Getcareer - Platform Karier Terbaik",
+    page_icon="💼", # Mengganti ikon roket dengan ikon tas
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+st.markdown("""
+<style>
+    .main-header {font-size: 2.5rem; color: #00B14F; font-weight: 700;}
+    .stButton>button {
+        background-color: #00B14F;
+        color: white;
+        border-radius: 8px; 
+        font-weight: bold;
+        padding: 10px;
+        width: 100%;
+    }
+    .stButton>button:hover {background-color: #008f40; color: white;}
+    .stContainer {
+        border: 1px solid #e0e0e0;
+        border-radius: 10px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        padding: 15px;
+        margin-bottom: 15px;
+    }
+    /* Menyelaraskan teks dan ikon di tengah untuk halaman login */
+    .centered-content {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        text-align: center;
+    }
+    .big-icon {
+        font-size: 80px; /* Ukuran ikon */
+        color: #00B14F; /* Warna ikon, sesuaikan jika perlu */
+        margin-bottom: 20px; /* Jarak antara ikon dan teks */
+    }
+</style>
+""", unsafe_allow_html=True)
+
+DB_NAME = 'users.db'
+
+@st.cache_resource
+def get_db_connection():
+    return sqlite3.connect(DB_NAME, check_same_thread=False)
+
+def init_db():
+    conn = get_db_connection()
+    c = conn.cursor()
+    try:
+        c.execute('CREATE TABLE IF NOT EXISTS userdata(username TEXT PRIMARY KEY, password TEXT, role TEXT, join_date TEXT)')
+        conn.commit()
+    except Exception as e:
+        st.error(f"Error Database: {e}")
+
+def add_userdata(username, password_hash, role='seeker'):
+    conn = get_db_connection()
+    c = conn.cursor()
+    join_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    try:
+        c.execute('INSERT INTO userdata(username, password, role, join_date) VALUES (?,?,?,?)', 
+                  (username, password_hash, role, join_date))
+        conn.commit()
+        return True
+    except sqlite3.IntegrityError:
+        return False
+    except Exception as e:
+        st.error(f"Error Database: {e}")
+        return False
+
+def login_user_db(username, password_hash):
+    conn = get_db_connection()
+    c = conn.cursor()
+    c.execute('SELECT * FROM userdata WHERE username = ? AND password = ?', (username, password_hash))
+    data = c.fetchall()
+    return data
+
+def view_all_users():
+    conn = get_db_connection()
+    try:
+        df = pd.read_sql_query("SELECT username, role, join_date FROM userdata", conn)
+        return df
+    except:
+        return pd.DataFrame()
+
+def make_hashes(password):
+    return hashlib.sha256(str.encode(password)).hexdigest()
+
+# Inisialisasi DB & Admin Default
+init_db()
+if not login_user_db('admin', make_hashes('admin')):
+    add_userdata('admin', make_hashes('admin'), 'admin')
+
+def init_session_state():
+    defaults = {
+        'logged_in': False,
+        'user_role': None,
+        'username': "",
+        'auth_mode': 'login', 
+        'current_page': 'Home',
+        'cv_uploaded_name': None
+    }
+    for key, value in defaults.items():
+        if key not in st.session_state:
+            st.session_state[key] = value
+
+init_session_state()
+
+# ==========================================
+# 4. GENERATOR DATA DUMMY
+# ==========================================
+@st.cache_data
+def get_jobs():
+    data = []
+    companies = ['Gojek', 'Tokopedia', 'Shopee', 'Traveloka', 'Grab', 'Amazon', 'Microsoft', 'Google', 'Mandiri', 'Telkom']
+    roles = ['Data Analyst', 'Software Engineer', 'Product Manager', 'UI/UX Designer', 'DevOps Engineer', 'Marketing Specialist', 'HR Recruiter', 'Cloud Architect', 'Cyber Security']
+    
+    for i in range(50):
+        gaji_int = random.randint(5, 25) # Simpan sebagai angka untuk progress bar
+        data.append({
+            "ID": i + 1,
+            "Posisi": random.choice(roles),
+            "Perusahaan": random.choice(companies),
+            "Gaji_Num": gaji_int,  # Kolom numerik untuk logic/sorting
+            "Gaji": f"Rp {gaji_int} Juta", # Kolom string untuk display text
+            "Lokasi": random.choice(['Jakarta', 'Remote', 'Bandung', 'Surabaya', 'Yogyakarta', 'Makassar']),
+            "Tanggal Posting": (datetime.now() - timedelta(days=random.randint(1, 30))).strftime("%Y-%m-%d")
+        })
+    return pd.DataFrame(data)
+
+# ==========================================
+# 5. FUNGSI HALAMAN (VIEWS)
+# ==========================================
+
+def auth_page():
+    c1, c2, c3 = st.columns([1, 2, 1])
+    with c2:
+        st.markdown("<br><br>", unsafe_allow_html=True)
+        # Konten di tengah
+        st.markdown("""
+        <div class="centered-content">
+            <span class="big-icon">💼</span> 
+            <h1 style='color:#00B14F; text-align: center;'>Selamat Datang di Getcareer</h1>
+            <p style='text-align: center;'>Temukan Karier Impian Anda Sekarang!</p>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        with st.container(border=True):
+            if st.session_state['auth_mode'] == 'login':
+                st.subheader("Masuk Akun 🔑")
+                with st.form("login_form"):
+                    username = st.text_input("Username")
+                    password = st.text_input("Password", type='password')
+                    submitted = st.form_submit_button("Masuk 🚀")
+
+                    if submitted:
+                        hashed_pswd = make_hashes(password)
+                        result = login_user_db(username, hashed_pswd)
+                        
+                        if result:
+                            st.session_state['logged_in'] = True
+                            st.session_state['username'] = username
+                            st.session_state['user_role'] = result[0][2] 
+                            st.success(f"Selamat datang kembali, {username}!")
+                            time.sleep(0.5)
+                            st.rerun()
+                        else:
+                            st.error("Username atau Password salah")
+
+                st.markdown("---")
+                st.write("Belum punya akun?")
+                if st.button("Daftar Sekarang"):
+                    st.session_state['auth_mode'] = 'register'
+                    st.rerun()
+
+            elif st.session_state['auth_mode'] == 'register':
+                st.subheader("Buat Akun Baru 📝")
+                with st.form("register_form"):
+                    new_user = st.text_input("Buat Username")
+                    new_password = st.text_input("Buat Password (Min. 4 Karakter)", type='password')
+                    confirm_password = st.text_input("Ulangi Password", type='password')
+                    submitted = st.form_submit_button("Daftar 🤝")
+
+                    if submitted:
+                        if new_password != confirm_password:
+                            st.error("❌ Password tidak sama!")
+                        elif len(new_password) < 4:
+                            st.warning("⚠️ Password minimal 4 karakter")
+                        else:
+                            hashed_new_password = make_hashes(new_password)
+                            if add_userdata(new_user, hashed_new_password):
+                                st.success("✅ Akun berhasil dibuat! Silakan Login.")
+                                time.sleep(1)
+                                st.session_state['auth_mode'] = 'login' 
+                                st.rerun()
+                            else:
+                                st.error("❌ Username sudah digunakan, coba yang lain.")
+                
+                st.markdown("---")
+                if st.button("Kembali ke Login"):
+                    st.session_state['auth_mode'] = 'login'
+                    st.rerun()
+
+def home_page():
+    st.markdown(f"<h1 class='main-header'>Halo, {st.session_state['username']}! 👋</h1>", unsafe_allow_html=True)
+    st.markdown("Selamat datang kembali di **Getcareer**, platform pencarian kerja terdepan. Kami siap membantu Anda menemukan peluang terbaik.")
+    
+    st.markdown("---")
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.subheader("🎯 Aksi Cepat")
+        st.info("Cek **5 Lowongan Baru** yang sesuai dengan minat Anda hari ini.")
+        if st.button("Lihat Lowongan Baru", key="go_search_home"):
+            st.session_state['current_page'] = 'SearchJobs'
+            st.rerun()
+
+    with col2:
+        st.subheader("🛠️ Persiapan Profil")
+        st.warning("Pastikan data Anda sudah lengkap dan CV terbaru sudah terunggah.")
+        if st.button("Perbarui Profil", key="go_profile_home"):
+            st.session_state['current_page'] = 'Profile'
+            st.rerun()
+
+def search_jobs_page():
+    st.title("🔍 Cari Lowongan Kerja")
+    st.markdown("Gunakan filter di bawah ini untuk mempermudah pencarian Anda.")
+    
+    df = get_jobs()
+    display_df = df.copy().drop(columns=['ID'])
+
+    all_roles = ['Semua Posisi'] + sorted(df['Posisi'].unique().tolist())
+    all_locations = ['Semua Lokasi'] + sorted(df['Lokasi'].unique().tolist())
+    
+    with st.container(border=True):
+        st.subheader("Kriteria Pencarian")
+        col1, col2, col3 = st.columns([3, 2, 2])
+        with col1:
+            keyword = st.text_input("Kata Kunci (Posisi / Perusahaan)", placeholder="Contoh: Data Analyst, Gojek")
+        with col2:
+            role_filter = st.selectbox("Filter Posisi", all_roles)
+        with col3:
+            location_filter = st.selectbox("Filter Lokasi", all_locations)
+        
+    if role_filter != 'Semua Posisi':
+        display_df = display_df[display_df['Posisi'] == role_filter]
+        
+    if location_filter != 'Semua Lokasi':
+        display_df = display_df[display_df['Lokasi'] == location_filter]
+        
+    if keyword:
+        keyword = keyword.lower()
+        display_df = display_df[
+            display_df.apply(lambda row: keyword in str(row['Posisi']).lower() or keyword in str(row['Perusahaan']).lower(), axis=1)
+        ]
+    
+    st.markdown(f"**Ditemukan {len(display_df)} Lowongan Tersedia:**")
+    
+    st.dataframe(
+        display_df[['Posisi', 'Perusahaan', 'Gaji_Num', 'Lokasi', 'Tanggal Posting']], 
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "Gaji_Num": st.column_config.ProgressColumn(
+                "Estimasi Gaji (Juta)",
+                format="Rp %f Jt",
+                min_value=0,
+                max_value=30,
+            ),
+        }
+    )
+
+def profile_page():
+    st.title("👤 Profil Pengguna & CV")
+    
+    col_info, col_cv = st.columns(2)
+    
+    with col_info:
+        st.markdown("### Informasi Akun Anda")
+        with st.container(border=True):
+            st.markdown(f"""
+            - **Username:** `{st.session_state['username']}`
+            - **Role Akun:** `{st.session_state['user_role'].capitalize()}`
+            - **Status:** **Aktif**
+            """)
+            st.caption("Untuk mengubah data sensitif, silakan hubungi Admin.")
+        
+    with col_cv:
+        st.markdown("### 📂 Upload Curriculum Vitae (CV)")
+        st.info("Pastikan Anda mengunggah CV terbaru dalam format **PDF**.")
+        
+        uploaded = st.file_uploader("Pilih file CV (Format PDF)", type="pdf")
+        
+        if uploaded:
+            st.session_state['cv_uploaded_name'] = uploaded.name
+            st.toast(f"✅ CV ({uploaded.name}) Berhasil diunggah!", icon="🎉")
+        
+        if st.session_state['cv_uploaded_name']:
+            st.success(f"CV Terdaftar: **{st.session_state['cv_uploaded_name']}**")
+        else:
+            st.warning("Belum ada CV yang diunggah.")
+
+def admin_page():
+    st.sidebar.title("👮 Admin Panel")
+    if st.sidebar.button("Logout Admin"):
+        st.session_state['logged_in'] = False
+        st.session_state['current_page'] = 'Home'
+        st.rerun()
+        
+    st.title("Database Pengguna 📊")
+    st.info("Data real-time dari database `users.db`.")
+    
+    user_db = view_all_users()
+    
+    if not user_db.empty:
+        st.dataframe(user_db, use_container_width=True)
+        
+        col_metrics = st.columns(3)
+        col_metrics[0].metric("Total Pengguna", len(user_db))
+        col_metrics[1].metric("Total Seeker", len(user_db[user_db['role'] == 'seeker']))
+        col_metrics[2].metric("Total Admin", len(user_db[user_db['role'] == 'admin']))
+    else:
+        st.write("Belum ada data pengguna.")
+
+# ==========================================
+# 6. NAVIGASI UTAMA
+# ==========================================
+def main():
+    if st.session_state['logged_in']:
+        if st.session_state['user_role'] == 'admin':
+            admin_page()
+        else:
+            st.sidebar.markdown(f"## Halo, {st.session_state['username']}!")
+            
+            pages_map = {"Home": "🏠 Beranda", "SearchJobs": "🔍 Cari Kerja", "Profile": "👤 Profil"}
+            page_keys = list(pages_map.keys())
+            
+            try:
+                default_idx = page_keys.index(st.session_state['current_page'])
+            except ValueError:
+                default_idx = 0
+
+            selected_page = st.sidebar.radio(
+                "Navigasi Utama", 
+                page_keys, 
+                index=default_idx,
+                format_func=lambda x: pages_map[x]
+            )
+
+            if selected_page != st.session_state['current_page']:
+                st.session_state['current_page'] = selected_page
+                st.rerun()
+
+            st.sidebar.markdown("---")
+            if st.sidebar.button("Logout"):
+                st.session_state['logged_in'] = False
+                st.session_state['current_page'] = 'Home'
+                st.rerun()
+
+            if st.session_state['current_page'] == 'Home':
+                home_page()
+            elif st.session_state['current_page'] == 'SearchJobs':
+                search_jobs_page()
+            elif st.session_state['current_page'] == 'Profile':
+                profile_page()
+            else:
+                home_page()
+    else:
+        auth_page()
+
+if __name__ == '__main__':
+    main()
