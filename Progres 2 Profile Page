@@ -1,0 +1,394 @@
+import streamlit as st
+import pandas as pd
+import time
+import hashlib
+import random
+import sqlite3
+from datetime import datetime, timedelta
+
+# ==========================================
+# 1. CONFIGURATION & CSS
+# ==========================================
+st.set_page_config(
+    page_title="Getcareer - Platform Karier Terbaik",
+    page_icon="💼",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+st.markdown("""
+<style>
+    .main-header {font-size: 2.5rem; color: #00B14F; font-weight: 700;}
+    .stButton>button {
+        background-color: #00B14F;
+        color: white;
+        border-radius: 8px; 
+        font-weight: bold;
+        padding: 10px;
+        width: 100%;
+    }
+    .stButton>button:hover {background-color: #008f40; color: white;}
+    .stContainer {
+        border: 1px solid #e0e0e0;
+        border-radius: 10px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        padding: 20px;
+        margin-bottom: 15px;
+    }
+    .centered-content {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        text-align: center;
+    }
+    .big-icon { font-size: 80px; color: #00B14F; margin-bottom: 20px; }
+</style>
+""", unsafe_allow_html=True)
+
+# ==========================================
+# 2. DATABASE FUNCTIONS (AUTO NEW DB)
+# ==========================================
+# PENTING: Nama file diganti agar komputer membuat file baru yang strukturnya benar
+DB_NAME = 'database_baru_v3.db' 
+
+@st.cache_resource
+def get_db_connection():
+    return sqlite3.connect(DB_NAME, check_same_thread=False)
+
+def init_db():
+    conn = get_db_connection()
+    c = conn.cursor()
+    # Memastikan tabel dibuat dengan kolom email
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS userdata (
+            username TEXT PRIMARY KEY, 
+            password TEXT, 
+            email TEXT,
+            role TEXT, 
+            full_name TEXT,
+            age INTEGER,
+            about_me TEXT,
+            work_history TEXT,
+            join_date TEXT
+        )
+    ''')
+    conn.commit()
+
+def register_user(username, email, password_hash, role='seeker'):
+    conn = get_db_connection()
+    c = conn.cursor()
+    join_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    try:
+        # Insert data lengkap termasuk email
+        c.execute('''INSERT INTO userdata
+                     (username, password, email, role, full_name, age, about_me, work_history, join_date) 
+                     VALUES (?,?,?,?,?,?,?,?,?)''', 
+                  (username, password_hash, email, role, "", 0, "", "", join_date))
+        conn.commit()
+        return True
+    except sqlite3.IntegrityError:
+        return False
+    except Exception as e:
+        st.error(f"Error Database: {e}")
+        return False
+
+def login_user_db(username, password_hash):
+    conn = get_db_connection()
+    c = conn.cursor()
+    c.execute('SELECT * FROM userdata WHERE username = ? AND password = ?', (username, password_hash))
+    data = c.fetchall()
+    return data
+
+def get_user_profile(username):
+    conn = get_db_connection()
+    c = conn.cursor()
+    c.execute('SELECT email, full_name, age, about_me, work_history FROM userdata WHERE username = ?', (username,))
+    data = c.fetchone()
+    return data
+
+def update_user_profile(username, full_name, age, about_me, work_history, new_email):
+    conn = get_db_connection()
+    c = conn.cursor()
+    try:
+        c.execute('''UPDATE userdata 
+                     SET full_name = ?, age = ?, about_me = ?, work_history = ?, email = ? 
+                     WHERE username = ?''', 
+                  (full_name, age, about_me, work_history, new_email, username))
+        conn.commit()
+        return True
+    except Exception as e:
+        st.error(f"Gagal Update: {e}")
+        return False
+
+def make_hashes(password):
+    return hashlib.sha256(str.encode(password)).hexdigest()
+
+# Inisialisasi Database Baru
+init_db()
+# Buat Admin Default jika belum ada
+if not login_user_db('admin', make_hashes('admin')):
+    register_user('admin', 'admin@getcareer.com', make_hashes('admin'), 'admin')
+
+# ==========================================
+# 3. SESSION STATE
+# ==========================================
+def init_session_state():
+    defaults = {
+        'logged_in': False,
+        'user_role': None,
+        'username': "",
+        'auth_mode': 'login', 
+        'current_page': 'Home',
+        'profile_pic_preview': None
+    }
+    for key, value in defaults.items():
+        if key not in st.session_state:
+            st.session_state[key] = value
+
+init_session_state()
+
+# ==========================================
+# 4. GENERATOR DATA DUMMY
+# ==========================================
+@st.cache_data
+def get_jobs():
+    data = []
+    companies = ['Gojek', 'Tokopedia', 'Shopee', 'Traveloka', 'Grab', 'Bank BCA', 'Pertamina', 'Telkomsel']
+    roles = ['Data Analyst', 'Software Engineer', 'Product Manager', 'UI/UX Designer', 'Digital Marketing', 'HR Manager']
+    
+    for i in range(30):
+        gaji_int = random.randint(6, 35)
+        data.append({
+            "ID": i + 1,
+            "Posisi": random.choice(roles),
+            "Perusahaan": random.choice(companies),
+            "Gaji_Num": gaji_int,
+            "Lokasi": random.choice(['Jakarta', 'Remote', 'Bandung', 'Surabaya', 'Bali']),
+            "Tanggal Posting": (datetime.now() - timedelta(days=random.randint(1, 20))).strftime("%Y-%m-%d")
+        })
+    return pd.DataFrame(data)
+
+# ==========================================
+# 5. HALAMAN AUTH (Sign Up Rapi & Vertikal)
+# ==========================================
+def auth_page():
+    c1, c2, c3 = st.columns([1, 2, 1])
+    with c2:
+        st.markdown("<br>", unsafe_allow_html=True)
+        st.markdown("""
+        <div class="centered-content">
+            <span class="big-icon">💼</span> 
+            <h1 style='color:#00B14F; text-align: center;'>Getcareer</h1>
+            <p style='text-align: center;'>Bangun Masa Depan Kariermu Di Sini</p>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        with st.container(border=True):
+            # --- LOGIN ---
+            if st.session_state['auth_mode'] == 'login':
+                st.subheader("🔑 Masuk Akun")
+                with st.form("login_form"):
+                    username = st.text_input("Username")
+                    password = st.text_input("Password", type='password')
+                    submitted = st.form_submit_button("Masuk 🚀")
+
+                    if submitted:
+                        hashed_pswd = make_hashes(password)
+                        result = login_user_db(username, hashed_pswd)
+                        
+                        if result:
+                            st.session_state['logged_in'] = True
+                            st.session_state['username'] = username
+                            st.session_state['user_role'] = result[0][3] # role
+                            st.success("Login Berhasil!")
+                            time.sleep(0.5)
+                            st.rerun()
+                        else:
+                            st.error("Username atau Password salah")
+
+                st.markdown("---")
+                col_text, col_btn = st.columns([2,1])
+                with col_text: st.write("Belum punya akun?")
+                with col_btn:
+                    if st.button("Daftar"):
+                        st.session_state['auth_mode'] = 'register'
+                        st.rerun()
+
+            # --- REGISTER (VERTIKAL, RAPI, LENGKAP) ---
+            elif st.session_state['auth_mode'] == 'register':
+                st.subheader("📝 Buat Akun Baru")
+                st.info("Lengkapi data berikut untuk mendaftar.")
+                
+                with st.form("register_form"):
+                    # Input disusun ke bawah (Vertikal)
+                    new_user = st.text_input("Username *", placeholder="Buat username unik")
+                    new_email = st.text_input("Alamat E-mail *", placeholder="contoh@email.com")
+                    new_password = st.text_input("Password *", type='password')
+                    confirm_password = st.text_input("Retype Password *", type='password')
+                    
+                    st.markdown("<br>", unsafe_allow_html=True)
+                    submitted = st.form_submit_button("Daftar Sekarang 🤝")
+
+                    if submitted:
+                        # Validasi
+                        if not new_user or not new_email or not new_password:
+                            st.warning("⚠️ Semua kolom bertanda (*) wajib diisi.")
+                        elif new_password != confirm_password:
+                            st.error("❌ Password tidak sama!")
+                        elif len(new_password) < 4:
+                            st.warning("⚠️ Password minimal 4 karakter.")
+                        elif "@" not in new_email:
+                            st.warning("⚠️ Format E-mail tidak valid.")
+                        else:
+                            hashed_pw = make_hashes(new_password)
+                            # Panggil fungsi register
+                            if register_user(new_user, new_email, hashed_pw):
+                                st.success("✅ Akun berhasil dibuat! Silakan Login.")
+                                time.sleep(1.5)
+                                st.session_state['auth_mode'] = 'login' 
+                                st.rerun()
+                            else:
+                                st.error("❌ Username sudah digunakan.")
+                
+                st.markdown("---")
+                if st.button("Kembali ke Login"):
+                    st.session_state['auth_mode'] = 'login'
+                    st.rerun()
+
+# ==========================================
+# 6. HALAMAN APP (HOME & PROFILE)
+# ==========================================
+def home_page():
+    st.markdown(f"<h1 class='main-header'>Halo, {st.session_state['username']}! 👋</h1>", unsafe_allow_html=True)
+    st.write("Temukan pekerjaan impianmu hari ini.")
+    
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Lowongan Aktif", "1,250+", "24 Hari ini")
+    c2.metric("Perusahaan", "500+", "Partner Resmi")
+    c3.metric("Pencari Kerja", "15k", "Aktif")
+
+    st.markdown("---")
+    col_a, col_b = st.columns(2)
+    if col_a.button("🔍 Cari Lowongan Kerja", use_container_width=True):
+        st.session_state['current_page'] = 'SearchJobs'
+        st.rerun()
+    if col_b.button("👤 Update Profil", use_container_width=True):
+        st.session_state['current_page'] = 'Profile'
+        st.rerun()
+
+def search_jobs_page():
+    st.title("🔍 Cari Lowongan Kerja")
+    df = get_jobs()
+    
+    with st.container(border=True):
+        c1, c2 = st.columns([3, 1])
+        search_txt = c1.text_input("Kata Kunci", placeholder="Posisi atau Perusahaan")
+        loc_filter = c2.selectbox("Lokasi", ["Semua"] + list(df['Lokasi'].unique()))
+            
+    if search_txt:
+        df = df[df.apply(lambda row: search_txt.lower() in str(row).lower(), axis=1)]
+    if loc_filter != "Semua":
+        df = df[df['Lokasi'] == loc_filter]
+
+    st.dataframe(
+        df[['Posisi', 'Perusahaan', 'Gaji_Num', 'Lokasi', 'Tanggal Posting']],
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "Gaji_Num": st.column_config.ProgressColumn("Estimasi Gaji (Juta)", format="Rp %f Jt", min_value=0, max_value=40)
+        }
+    )
+
+def profile_page():
+    st.title("👤 Profil Saya")
+    
+    user_data = get_user_profile(st.session_state['username'])
+    if user_data:
+        db_email, db_fullname, db_age, db_about, db_history = user_data
+    else:
+        db_email, db_fullname, db_age, db_about, db_history = ("", "", 0, "", "")
+
+    # Layout Kiri (Foto) & Kanan (Form)
+    col_left, col_right = st.columns([1, 2], gap="large")
+    
+    with col_left:
+        with st.container(border=True):
+            st.markdown("<h4 style='text-align:center;'>Foto Profil</h4>", unsafe_allow_html=True)
+            if st.session_state['profile_pic_preview']:
+                st.image(st.session_state['profile_pic_preview'], width=200, use_container_width=True)
+            else:
+                st.markdown("""
+                    <div style="display:flex; justify-content:center; margin-bottom:15px;">
+                        <img src="https://cdn-icons-png.flaticon.com/512/4140/4140048.png" width="150" style="border-radius:50%; border: 4px solid #00B14F;">
+                    </div>
+                """, unsafe_allow_html=True)
+            
+            uploaded_file = st.file_uploader("Ganti Foto", type=['jpg', 'png', 'jpeg'], label_visibility="collapsed")
+            if uploaded_file is not None:
+                st.session_state['profile_pic_preview'] = uploaded_file
+                st.toast("Foto berhasil diunggah!", icon="📸")
+                time.sleep(1)
+                st.rerun()
+            st.markdown("---")
+            st.write(f"**Username:** @{st.session_state['username']}")
+            st.write(f"**Status:** Job Seeker")
+
+    with col_right:
+        with st.form("profile_update_form"):
+            st.markdown("### 📝 Informasi Pribadi")
+            
+            # Nama & Umur sebaris biar rapi
+            c_name, c_age = st.columns([3, 1])
+            with c_name:
+                full_name_inp = st.text_input("Nama Lengkap", value=db_fullname if db_fullname else "")
+            with c_age:
+                age_inp = st.number_input("Umur", min_value=17, max_value=70, value=db_age if db_age else 18)
+            
+            email_inp = st.text_input("Alamat E-mail", value=db_email if db_email else "")
+
+            st.markdown("### ℹ️ Tentang Saya (About Me)")
+            about_inp = st.text_area("Deskripsi Singkat", value=db_about if db_about else "", height=100)
+
+            st.markdown("### 💼 Riwayat Pekerjaan")
+            history_inp = st.text_area("Pengalaman Kerja", value=db_history if db_history else "", height=150)
+            
+            save_btn = st.form_submit_button("Simpan Perubahan 💾", type="primary")
+            if save_btn:
+                if update_user_profile(st.session_state['username'], full_name_inp, age_inp, about_inp, history_inp, email_inp):
+                    st.success("✅ Data Profil berhasil disimpan!")
+                    time.sleep(1)
+                    st.rerun()
+                else:
+                    st.error("❌ Gagal menyimpan data.")
+
+# ==========================================
+# 7. NAVIGASI UTAMA
+# ==========================================
+def main():
+    if st.session_state['logged_in']:
+        st.sidebar.title("Menu Navigasi")
+        if st.session_state['user_role'] == 'admin':
+            st.sidebar.warning("🔧 Mode Admin")
+            page = st.sidebar.selectbox("Pilih Halaman", ["Beranda", "Database User"])
+            if page == "Beranda": home_page()
+            elif page == "Database User": 
+                st.title("Database Pengguna")
+                st.dataframe(pd.read_sql("SELECT * FROM userdata", get_db_connection()))
+        else:
+            menu_dict = {"Home": "🏠 Beranda", "SearchJobs": "🔍 Cari Kerja", "Profile": "👤 Profil Saya"}
+            selected = st.sidebar.radio("Ke Halaman:", list(menu_dict.keys()), format_func=lambda x: menu_dict[x])
+            st.session_state['current_page'] = selected
+            st.sidebar.markdown("---")
+            if st.sidebar.button("🚪 Keluar Aplikasi"):
+                st.session_state['logged_in'] = False
+                st.session_state['current_page'] = 'Home'
+                st.rerun()
+
+            if st.session_state['current_page'] == 'Home': home_page()
+            elif st.session_state['current_page'] == 'SearchJobs': search_jobs_page()
+            elif st.session_state['current_page'] == 'Profile': profile_page()
+    else:
+        auth_page()
+
+if __name__ == '__main__':
+    main()
